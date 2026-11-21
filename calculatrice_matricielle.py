@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+ #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 Calculatrice matricielle détaillée.
@@ -8,6 +8,7 @@ Fonctionnalités :
 - Déterminant par élimination de Gauss avec détail
 - Inverse par cofacteurs
 - Résolution de systèmes linéaires par la règle de Cramer
+- Résolution universelle par Gauss-Jordan (RREF) avec détail
 - Tests unitaires
 
 Arithmétique : fractions exactes (fractions.Fraction).
@@ -29,11 +30,6 @@ Matrix = List[List[Fraction]]
 # ---------------------------------------------------------------------------
 
 def parse_matrix(text: str) -> Matrix:
-    """Formats acceptés :
-    - '1 2 3; 4 5 6; 7 8 9'
-    - '1 2 3\n4 5 6\n7 8 9'
-    - '[[1,2,3],[4,5,6],[7,8,9]]'
-    """
     s = text.strip()
     if s.startswith("[["):
         rows = re.findall(r"\[([^\[\]]*)\]", s)
@@ -77,6 +73,17 @@ def format_matrix(M: Matrix, prefix: str = "") -> str:
         prefix + "[ " + "  ".join(s.rjust(w) for s in row) + " ]"
         for row in strs
     )
+
+
+def format_augmented(aug: Matrix, n_cols: int) -> str:
+    strs = [[fmt(x) for x in row] for row in aug]
+    w = [max(len(strs[i][j]) for i in range(len(strs))) for j in range(n_cols + 1)]
+    lines = []
+    for r in strs:
+        left = "  ".join(r[j].rjust(w[j]) for j in range(n_cols))
+        right = r[n_cols].rjust(w[n_cols])
+        lines.append(f"[ {left} | {right} ]")
+    return "\n".join(lines)
 
 
 def minor(M: Matrix, i: int, j: int) -> Matrix:
@@ -274,6 +281,94 @@ def solve_cramer(A: Matrix, b: List[Fraction], trace: Optional[List[str]] = None
 
 
 # ---------------------------------------------------------------------------
+# Gauss-Jordan (RREF) avec détail
+# ---------------------------------------------------------------------------
+
+def gauss_jordan(A: Matrix, b: List[Fraction], trace: Optional[List[str]] = None) -> None:
+    n = len(A)
+    m = len(A[0]) if n > 0 else 0
+    if len(b) != n:
+        raise ValueError("Dimensions incompatibles")
+
+    aug = [A[i][:] + [b[i]] for i in range(n)]
+
+    if trace is not None:
+        trace.append("Matrice augmentée [A|b] :")
+        trace.extend(format_augmented(aug, m).splitlines())
+
+    row = 0
+    pivot_cols = []
+
+    for col in range(m):
+        pivot_row = row
+        while pivot_row < n and aug[pivot_row][col] == 0:
+            pivot_row += 1
+
+        if pivot_row == n:
+            continue
+
+        if pivot_row != row:
+            aug[row], aug[pivot_row] = aug[pivot_row], aug[row]
+            if trace is not None:
+                trace.append(f"  Échange L{row+1} <-> L{pivot_row+1}")
+
+        pivot = aug[row][col]
+        if pivot != 1:
+            aug[row] = [x / pivot for x in aug[row]]
+            if trace is not None:
+                trace.append(f"  L{row+1} <- (1/{fmt(pivot)}) * L{row+1}")
+
+        for i in range(n):
+            if i != row and aug[i][col] != 0:
+                factor = aug[i][col]
+                aug[i] = [aug[i][j] - factor * aug[row][j] for j in range(m + 1)]
+                if trace is not None:
+                    trace.append(f"  L{i+1} <- L{i+1} - ({fmt(factor)}) * L{row+1}")
+
+        pivot_cols.append(col)
+        row += 1
+        if row == n:
+            break
+
+    if trace is not None:
+        trace.append("Matrice échelonnée réduite [RREF] :")
+        trace.extend(format_augmented(aug, m).splitlines())
+
+    # Analyse
+    for i in range(n):
+        if all(aug[i][j] == 0 for j in range(m)) and aug[i][m] != 0:
+            if trace is not None:
+                trace.append(f"  Ligne {i+1} : 0 = {fmt(aug[i][m])} -> Système INCOMPATIBLE (aucune solution).")
+            return
+
+    if len(pivot_cols) < m:
+        if trace is not None:
+            trace.append("  Variables libres détectées -> une INFINITÉ de solutions.")
+            free_vars = [j for j in range(m) if j not in pivot_cols]
+            for fv in free_vars:
+                trace.append(f"  Soit x{fv+1} = t{fv+1} (paramètre libre).")
+            for i, pc in enumerate(pivot_cols):
+                terms = []
+                for fv in free_vars:
+                    coeff = aug[i][fv]
+                    if coeff != 0:
+                        sign = "-" if coeff > 0 else "+"
+                        abs_coeff = abs(coeff)
+                        if abs_coeff == 1:
+                            terms.append(f" {sign} t{fv+1}")
+                        else:
+                            terms.append(f" {sign} ({fmt(abs_coeff)})*t{fv+1}")
+                term_str = "".join(terms)
+                trace.append(f"  x{pc+1} = {fmt(aug[i][m])}{term_str}")
+        return
+
+    if trace is not None:
+        trace.append("  Solution UNIQUE :")
+        for i, pc in enumerate(pivot_cols):
+            trace.append(f"  x{pc+1} = {fmt(aug[i][m])}")
+
+
+# ---------------------------------------------------------------------------
 # REPL
 # ---------------------------------------------------------------------------
 
@@ -295,7 +390,8 @@ def repl() -> None:
     print("Calculatrice matricielle détaillée")
     print("  det <matrice>          déterminant (Laplace + Gauss)")
     print("  inv <matrice>          inverse par cofacteurs")
-    print("  solve <A> | <b>        résout Ax=b par Cramer")
+    print("  cramer <A> | <b>       résout Ax=b (solution unique)")
+    print("  gj <A> | <b>           résout Ax=b par Gauss-Jordan (détails RREF)")
     print("  quit")
     print("Format : '1 2 3; 4 5 6; 7 8 9' ou '[[1,2,3],[4,5,6],[7,8,9]]'")
     print()
@@ -321,10 +417,10 @@ def repl() -> None:
                 if inv is not None:
                     print("A^-1 =")
                     print(format_matrix(inv))
-            elif line.lower().startswith("solve "):
-                parts = line[6:].split("|")
+            elif line.lower().startswith("cramer "):
+                parts = line[7:].split("|")
                 if len(parts) != 2:
-                    raise ValueError("Format : solve <A> | <b>")
+                    raise ValueError("Format : cramer <A> | <b>")
                 A = parse_matrix(parts[0].strip())
                 b = [Fraction(x) for x in re.split(r"[,\s]+", parts[1].strip()) if x]
                 t = []
@@ -333,6 +429,18 @@ def repl() -> None:
                     print(l)
                 if x is not None:
                     print("Solution : " + ", ".join(f"x{i+1}={fmt(v)}" for i, v in enumerate(x)))
+                else:
+                    print("det(A) = 0 : Cramer ne s'applique pas. Utilise 'gj'.")
+            elif line.lower().startswith("gj "):
+                parts = line[3:].split("|")
+                if len(parts) != 2:
+                    raise ValueError("Format : gj <A> | <b>")
+                A = parse_matrix(parts[0].strip())
+                b = [Fraction(x) for x in re.split(r"[,\s]+", parts[1].strip()) if x]
+                t = []
+                gauss_jordan(A, b, t)
+                for l in t:
+                    print(l)
             else:
                 print("Commande inconnue.")
         except Exception as exc:
@@ -383,6 +491,32 @@ class TestMatrix(unittest.TestCase):
         A = parse_matrix("1 2; 2 4")
         b = [Fraction(1), Fraction(2)]
         self.assertIsNone(solve_cramer(A, b))
+
+    def test_gj_unique(self) -> None:
+        A = parse_matrix("2 1; 1 3")
+        b = [Fraction(5), Fraction(10)]
+        t: List[str] = []
+        gauss_jordan(A, b, t)
+        out = "\n".join(t)
+        self.assertIn("Solution UNIQUE", out)
+        self.assertIn("x1 = 1", out)
+        self.assertIn("x2 = 3", out)
+
+    def test_gj_incompatible(self) -> None:
+        A = parse_matrix("1 2; 2 4")
+        b = [Fraction(1), Fraction(3)]
+        t = []
+        gauss_jordan(A, b, t)
+        self.assertIn("INCOMPATIBLE", "\n".join(t))
+
+    def test_gj_infinite(self) -> None:
+        A = parse_matrix("1 2; 2 4")
+        b = [Fraction(1), Fraction(2)]
+        t = []
+        gauss_jordan(A, b, t)
+        out = "\n".join(t)
+        self.assertIn("INFINITÉ", out)
+        self.assertIn("t2", out) # x2 est libre, donc x1 dépend de t2
 
 
 if __name__ == "__main__":
